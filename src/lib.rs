@@ -290,7 +290,7 @@ impl PaginatedCursor {
         count_options.skip = None;
         let count_query = query.map_or_else(Document::new, Clone::clone);
         let total_count = collection
-            .count_documents(count_query /*Some(CountOptions::from(count_options))*/)
+            .count_documents(count_query)
             .with_options(CountOptions::from(count_options))
             .await
             .map_err(|err| CursorError::Unknown(err.to_string()))?;
@@ -353,7 +353,7 @@ impl PaginatedCursor {
             }
         }
         let mut cursor = collection
-            .find(query_doc /*Some(options.into())*/)
+            .find(query_doc)
             .with_options(<CursorOptions as Into<FindOptions>>::into(options))
             .await
             .map_err(|err| CursorError::Unknown(err.to_string()))?;
