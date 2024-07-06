@@ -17,13 +17,14 @@ graphql = ["juniper"]
 
 [dependencies]
 base64 = "0.22.1"
-bson = "2.5.0"
-log = "0.4.17"
-mongodb = "2.3.1"
-serde = "1.0"
+bson = "2"
+log = "0.4"
+mongodb = "3"
+serde = "1"
 juniper = { version = "0.16.1", optional = true }
-futures = "0.3.26"
-futures-util = "0.3.26"
+futures = "0.3"
+futures-util = "0.3"
+tokio = "1"
 
 [dev-dependencies]
-tokio = { version = "1.25.0", features = ["full"]}
+tokio = { version = "1", features = ["full"]}

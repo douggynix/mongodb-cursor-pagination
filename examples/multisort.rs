@@ -14,7 +14,7 @@ async fn main() {
 
     // Ensure there is no collection myfruits
     db.collection::<MyFruit>("myfruits")
-        .drop(None)
+        .drop()
         .await
         .expect("Failed to drop table");
 
@@ -38,7 +38,8 @@ async fn main() {
     // Blackberry | 12
 
     db.collection("myfruits")
-        .insert_many(docs, None)
+        .insert_many(docs)
+        .with_options(None)
         .await
         .expect("Unable to insert data");
 
@@ -142,7 +143,8 @@ async fn main() {
     );
 
     db.collection::<Document>("myfruits")
-        .drop(None)
+        .drop()
+        .with_options(None)
         .await
         .expect("Unable to drop collection");
 }

@@ -1,22 +1,22 @@
 #![doc = include_str!("../README.md")]
 #![forbid(unsafe_code)]
 #![warn(
-clippy::cast_lossless,
-clippy::cast_possible_truncation,
-clippy::cast_possible_wrap,
-clippy::cast_precision_loss,
-clippy::cast_sign_loss,
-clippy::checked_conversions,
-clippy::implicit_saturating_sub,
-clippy::integer_arithmetic,
-clippy::mod_module_files,
-clippy::panic,
-clippy::panic_in_result_fn,
-clippy::unwrap_used,
-missing_docs,
-rust_2018_idioms,
-unused_lifetimes,
-unused_qualifications
+    clippy::cast_lossless,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::checked_conversions,
+    clippy::implicit_saturating_sub,
+    clippy::integer_arithmetic,
+    clippy::mod_module_files,
+    clippy::panic,
+    clippy::panic_in_result_fn,
+    clippy::unwrap_used,
+    missing_docs,
+    rust_2018_idioms,
+    unused_lifetimes,
+    unused_qualifications
 )]
 
 //! ### Usage:
@@ -50,7 +50,7 @@ unused_qualifications
 //!         .expect("Failed to initialize client.");
 //!     let db = client.database("mongodb_cursor_pagination");
 //!   #  db.collection::<MyFruit>("myfruits")
-//!   #      .drop(None)
+//!   #      .drop()
 //!   #      .await
 //!   #      .expect("Failed to drop table");
 //!
@@ -63,7 +63,7 @@ unused_qualifications
 //!     ];
 //!
 //!     db.collection("myfruits")
-//!         .insert_many(docs, None)
+//!         .insert_many(docs)
 //!         .await
 //!         .expect("Unable to insert data");
 //!
@@ -154,13 +154,13 @@ use base64::Engine;
 use bson::{doc, oid::ObjectId, Bson, Document};
 use error::CursorError;
 use futures_util::stream::StreamExt;
+use futures_util::TryFutureExt;
 use log::warn;
 use mongodb::options::{CountOptions, EstimatedDocumentCountOptions};
 use mongodb::{options::FindOptions, Collection};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::ops::Neg;
-use futures_util::TryFutureExt;
 
 /// Provides details about if there are more pages and the cursor to the start of the list and end
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
@@ -265,23 +265,22 @@ impl PaginatedCursor {
     }
 
     /// Estimates the number of documents in the collection using collection metadata.
-    pub async fn estimated_document_count<T>(
+    pub async fn estimated_document_count<T: Send + Sync>(
         &self,
         collection: &Collection<T>,
     ) -> Result<u64, CursorError> {
         let total_count = collection
-            .estimated_document_count(Some(EstimatedDocumentCountOptions::from(
-                self.options.clone(),
-            )))
-            .map_err(|err| CursorError::Unknown(err.to_string()))
-            .await?;
+            .estimated_document_count()
+            .with_options(EstimatedDocumentCountOptions::from(self.options.clone()))
+            .await
+            .map_err(|err| CursorError::Unknown(err.to_string()))?;
         Ok(total_count)
     }
 
     /// Gets the number of documents matching filter.
     /// Note that using [`PaginatedCursor::estimated_document_count`](#method.estimated_document_count)
     /// is recommended instead of this method is most cases.
-    pub async fn count_documents<T>(
+    pub async fn count_documents<T: Send + Sync>(
         &self,
         collection: &Collection<T>,
         query: Option<&Document>,
@@ -291,7 +290,8 @@ impl PaginatedCursor {
         count_options.skip = None;
         let count_query = query.map_or_else(Document::new, Clone::clone);
         let total_count = collection
-            .count_documents(count_query, Some(CountOptions::from(count_options)))
+            .count_documents(count_query /*Some(CountOptions::from(count_options))*/)
+            .with_options(CountOptions::from(count_options))
             .await
             .map_err(|err| CursorError::Unknown(err.to_string()))?;
         Ok(total_count)
@@ -303,8 +303,8 @@ impl PaginatedCursor {
         collection: &Collection<Document>,
         filter: Option<&Document>,
     ) -> Result<FindResult<T>, CursorError>
-        where
-            T: DeserializeOwned + Sync + Send + Unpin + Clone,
+    where
+        T: DeserializeOwned + Sync + Send + Unpin + Clone,
     {
         // first count the docs
         let total_count = self.count_documents(collection, filter).await?;
@@ -353,7 +353,8 @@ impl PaginatedCursor {
             }
         }
         let mut cursor = collection
-            .find(query_doc, Some(options.into()))
+            .find(query_doc /*Some(options.into())*/)
+            .with_options(<CursorOptions as Into<FindOptions>>::into(options))
             .await
             .map_err(|err| CursorError::Unknown(err.to_string()))?;
         while let Some(result) = cursor.next().await {
@@ -377,9 +378,9 @@ impl PaginatedCursor {
             has_previous_page = true;
             has_next_page = has_more;
         } else {
-            has_more = match self.options.limit{
+            has_more = match self.options.limit {
                 None => return Err(CursorError::Unknown("Limit is empty".into())),
-                Some(limit) => items.len() as i64  > limit.saturating_sub(1)
+                Some(limit) => items.len() as i64 > limit.saturating_sub(1),
             };
 
             has_previous_page = (self.has_cursor && self.direction == CursorDirections::Next)
@@ -437,10 +438,11 @@ impl PaginatedCursor {
         let mut only_sort_keys = Document::new();
 
         match self.options.sort.as_ref() {
-            None =>  Ok(String::new()),
+            None => Ok(String::new()),
             Some(sort) => {
                 for key in sort.keys() {
-                    if let Some((_, value)) = self.get_value_from_doc(key, Bson::Document(doc.clone()))
+                    if let Some((_, value)) =
+                        self.get_value_from_doc(key, Bson::Document(doc.clone()))
                     {
                         only_sort_keys.insert(key, value);
                     }
@@ -467,22 +469,26 @@ impl PaginatedCursor {
 
         // Don't do anything if no cursor is provided
         if self.cursor_doc.is_empty() {
-            return Ok(query_doc)
+            return Ok(query_doc);
         }
         let Some(sort) = &self.options.sort else {
-            return Ok(query_doc)
+            return Ok(query_doc);
         };
 
         // this is the simplest form, it's just a sort by _id
         if sort.len() <= 1 {
-            let object_id = match self.cursor_doc.get("_id"){
-                None => return Err(CursorError::Unknown("_id is value is missing from cursor_doc".into())),
-                Some(value) => value.clone()
+            let object_id = match self.cursor_doc.get("_id") {
+                None => {
+                    return Err(CursorError::Unknown(
+                        "_id is value is missing from cursor_doc".into(),
+                    ))
+                }
+                Some(value) => value.clone(),
             };
 
             let direction = self.get_direction_from_key(sort, "_id");
             query_doc.insert("_id", doc! { direction: object_id });
-            return Ok(query_doc)
+            return Ok(query_doc);
         }
 
         let mut queries: Vec<Document> = Vec::new();
